@@ -130,15 +130,31 @@ rtsp://admin:password@192.168.1.100:554/h265Preview_01_main
 
 ### Ubiquiti (UniFi)
 ```bash
-# Stream alta calidad
+# Stream alta calidad (1080p/4K)
 rtsp://username:password@192.168.1.100:554/s0
 
-# Stream media calidad
+# Stream media calidad (720p) - Recomendado para web streaming
 rtsp://username:password@192.168.1.100:554/s1
 
-# Stream baja calidad
+# Stream baja calidad (480p) - Para conexiones lentas
 rtsp://username:password@192.168.1.100:554/s2
+
+# Configuración específica para UniFi
+rtsp://admin:password@camera-ip:554/s1
+
+# Ejemplo para cámara UniFi optimizada
+rtsp://admin:password@camera-ip:554/s1
+
+# Con user agent específico (para mejores resultados)
+# Configurar en FFmpeg: -user_agent "UniFiVideo"
 ```
+
+#### **Configuración Recomendada para UniFi:**
+- **Para streaming web**: Usar `/s1` (calidad media)
+- **User Agent**: `UniFiVideo` para mejor compatibilidad
+- **Transporte**: TCP preferido para estabilidad
+- **Bitrate**: 2000k para calidad óptima
+- **Profile**: Main level 3.1 para compatibilidad H.264
 
 ### D-Link
 ```bash
