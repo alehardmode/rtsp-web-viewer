@@ -7,6 +7,9 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const { URL } = require("url");
 
+// FFmpeg feature detection cache
+let ffmpegFeatures = null;
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -93,8 +96,66 @@ function sanitizeInput(input) {
   return input.replace(/[;&|`$(){}[\]\\]/g, "");
 }
 
+// Detect FFmpeg features for compatibility
+async function detectFFmpegFeatures() {
+  if (ffmpegFeatures !== null) {
+    return ffmpegFeatures;
+  }
+
+  return new Promise((resolve) => {
+    const ffmpeg = spawn(
+      "ffmpeg",
+      [
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=1:size=32x32:rate=1",
+        "-f",
+        "null",
+        "-",
+      ],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    let stderr = "";
+    ffmpeg.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    ffmpeg.on("close", () => {
+      ffmpegFeatures = {
+        supportsReconnect: stderr.includes("reconnect"),
+        supportsRtspTransport: stderr.includes("rtsp_transport"),
+        version: stderr.match(/ffmpeg version ([^\s]+)/)?.[1] || "unknown",
+      };
+      console.log("FFmpeg features detected:", ffmpegFeatures);
+      resolve(ffmpegFeatures);
+    });
+
+    ffmpeg.on("error", () => {
+      ffmpegFeatures = {
+        supportsReconnect: false,
+        supportsRtspTransport: true,
+        version: "unknown",
+      };
+      resolve(ffmpegFeatures);
+    });
+
+    // Kill after 3 seconds if still running
+    setTimeout(() => {
+      try {
+        ffmpeg.kill("SIGTERM");
+      } catch (e) {
+        // Process might already be dead
+      }
+    }, 3000);
+  });
+}
+
 // API endpoint to start RTSP stream
-app.post("/api/stream/start", (req, res) => {
+app.post("/api/stream/start", async (req, res) => {
   const { rtspUrl, streamId } = req.body;
 
   if (!rtspUrl || !streamId) {
@@ -137,18 +198,38 @@ app.post("/api/stream/start", (req, res) => {
     // Sanitize the RTSP URL to prevent command injection
     const sanitizedUrl = sanitizeInput(rtspUrl);
 
+    // Detect FFmpeg features for compatibility
+    const features = await detectFFmpegFeatures();
+
     // FFmpeg command to convert RTSP to HLS with security considerations
     const ffmpegArgs = [
-      "-rtsp_transport",
-      "tcp",
       "-timeout",
       "30000000",
-      "-reconnect",
+      "-fflags",
+      "+genpts",
+      "-threads",
       "1",
-      "-reconnect_streamed",
-      "1",
-      "-reconnect_delay_max",
-      "5",
+    ];
+
+    // Add RTSP transport if supported
+    if (features.supportsRtspTransport) {
+      ffmpegArgs.push("-rtsp_transport", "tcp");
+    }
+
+    // Add reconnect options if supported
+    if (features.supportsReconnect) {
+      ffmpegArgs.push(
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "5",
+      );
+    }
+
+    // Add input and output parameters
+    ffmpegArgs.push(
       "-i",
       sanitizedUrl,
       "-c:v",
@@ -173,10 +254,10 @@ app.post("/api/stream/start", (req, res) => {
       "0",
       "-avoid_negative_ts",
       "make_zero",
-      "-fflags",
-      "+genpts",
+      "-loglevel",
+      "warning",
       path.join(hlsDir, "stream.m3u8"),
-    ];
+    );
 
     const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
       stdio: ["pipe", "pipe", "pipe"],
