@@ -103,54 +103,57 @@ async function detectFFmpegFeatures() {
   }
 
   return new Promise((resolve) => {
-    const ffmpeg = spawn(
-      "ffmpeg",
-      [
-        "-f",
-        "lavfi",
-        "-i",
-        "testsrc=duration=1:size=32x32:rate=1",
-        "-f",
-        "null",
-        "-",
-      ],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
+    const ffmpeg = spawn("ffmpeg", ["-h", "full"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
     let stderr = "";
+    let stdout = "";
+
+    ffmpeg.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
     ffmpeg.stderr.on("data", (data) => {
       stderr += data.toString();
     });
 
     ffmpeg.on("close", () => {
+      const helpText = stdout + stderr;
       ffmpegFeatures = {
-        supportsReconnect: stderr.includes("reconnect"),
-        supportsRtspTransport: stderr.includes("rtsp_transport"),
-        version: stderr.match(/ffmpeg version ([^\s]+)/)?.[1] || "unknown",
+        supportsReconnect: helpText.includes("-reconnect"),
+        supportsRtspTransport: helpText.includes("-rtsp_transport"),
+        supportsSync: helpText.includes("-sync"),
+        supportsMaxDelay: helpText.includes("-max_delay"),
+        supportsErrDetect: helpText.includes("-err_detect"),
+        version: helpText.match(/ffmpeg version ([^\s]+)/)?.[1] || "unknown",
       };
       console.log("FFmpeg features detected:", ffmpegFeatures);
       resolve(ffmpegFeatures);
     });
 
     ffmpeg.on("error", () => {
+      // Fallback for basic compatibility
       ffmpegFeatures = {
         supportsReconnect: false,
-        supportsRtspTransport: true,
+        supportsRtspTransport: false,
+        supportsSync: false,
+        supportsMaxDelay: false,
+        supportsErrDetect: false,
         version: "unknown",
       };
+      console.log("FFmpeg features detected (fallback):", ffmpegFeatures);
       resolve(ffmpegFeatures);
     });
 
-    // Kill after 3 seconds if still running
+    // Kill after 5 seconds if still running
     setTimeout(() => {
       try {
         ffmpeg.kill("SIGTERM");
       } catch (e) {
         // Process might already be dead
       }
-    }, 3000);
+    }, 5000);
   });
 }
 
@@ -201,31 +204,29 @@ app.post("/api/stream/start", async (req, res) => {
     // Detect FFmpeg features for compatibility
     const features = await detectFFmpegFeatures();
 
-    // FFmpeg command to convert RTSP to HLS with optimized parameters for packet loss
+    // FFmpeg command to convert RTSP to HLS with compatible parameters
     const ffmpegArgs = [
-      "-timeout",
-      "30000000",
       "-fflags",
-      "+genpts+discardcorrupt",
+      "+genpts",
       "-threads",
       "1",
-      "-max_delay",
-      "500000",
-      "-reorder_queue_size",
-      "1000",
-      "-buffer_size",
-      "1024000",
       "-analyzeduration",
       "1000000",
       "-probesize",
       "1000000",
-      "-sync",
-      "ext",
     ];
+
+    // Add basic timeout
+    ffmpegArgs.push("-timeout", "30000000");
 
     // Add RTSP transport if supported
     if (features.supportsRtspTransport) {
-      ffmpegArgs.push("-rtsp_transport", "tcp", "-rtsp_flags", "prefer_tcp");
+      ffmpegArgs.push("-rtsp_transport", "tcp");
+    }
+
+    // Add advanced options if supported
+    if (features.supportsMaxDelay) {
+      ffmpegArgs.push("-max_delay", "500000");
     }
 
     // Add reconnect options if supported
@@ -266,12 +267,6 @@ app.post("/api/stream/start", async (req, res) => {
       "0",
       "-avoid_negative_ts",
       "make_zero",
-      "-err_detect",
-      "ignore_err",
-      "-recovery_wait_time",
-      "1",
-      "-stimeout",
-      "5000000",
       "-loglevel",
       "warning",
       path.join(hlsDir, "stream.m3u8"),
