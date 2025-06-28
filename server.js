@@ -210,8 +210,12 @@ app.post("/api/stream/start", async (req, res) => {
     // Use basic FFmpeg configuration for compatibility
     const features = getBasicFFmpegFeatures();
 
-    // FFmpeg command with minimal, widely compatible parameters
+    // FFmpeg command with error tolerance for corrupted frames
     const ffmpegArgs = [
+      "-fflags",
+      "+genpts+igndts",
+      "-err_detect",
+      "ignore_err",
       "-i",
       sanitizedUrl,
       "-c:v",
@@ -236,8 +240,10 @@ app.post("/api/stream/start", async (req, res) => {
       "0",
       "-avoid_negative_ts",
       "make_zero",
+      "-ec",
+      "guess_mvs+deblock",
       "-loglevel",
-      "error",
+      "warning",
       path.join(hlsDir, "stream.m3u8"),
     ];
 
