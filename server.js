@@ -76,6 +76,10 @@ let systemResources = {
   lastCheck: Date.now(),
 };
 
+// Auto-load cameras configuration
+const autoLoadCameras = process.env.AUTO_LOAD_CAMERAS === "true";
+const autoStartDelay = parseInt(process.env.AUTO_START_DELAY) || 3000;
+
 // Serve static files
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
@@ -213,6 +217,318 @@ function monitorResources() {
 
 // Check resources every 30 seconds
 setInterval(monitorResources, 30000);
+
+// Auto-load cameras function
+async function autoLoadConfiguredCameras() {
+  if (!autoLoadCameras) {
+    console.log("Auto-load cameras disabled");
+    return;
+  }
+
+  console.log("🎬 Auto-loading configured cameras...");
+
+  const cameras = [];
+
+  // Load up to 4 cameras from environment
+  for (let i = 1; i <= 4; i++) {
+    const url = process.env[`CAMERA_${i}_URL`];
+    const name = process.env[`CAMERA_${i}_NAME`];
+    const id = process.env[`CAMERA_${i}_ID`];
+
+    if (url && id) {
+      cameras.push({ url, name: name || `Camera ${i}`, id });
+    }
+  }
+
+  if (cameras.length === 0) {
+    console.log("No cameras configured in environment variables");
+    return;
+  }
+
+  console.log(`Found ${cameras.length} cameras to auto-load:`);
+  cameras.forEach((cam, index) => {
+    console.log(`  ${index + 1}. ${cam.name} (${cam.id})`);
+  });
+
+  // Start cameras with delay between each
+  for (let i = 0; i < cameras.length; i++) {
+    const camera = cameras[i];
+
+    if (i > 0) {
+      console.log(`Waiting ${autoStartDelay}ms before starting next camera...`);
+      await new Promise((resolve) => setTimeout(resolve, autoStartDelay));
+    }
+
+    try {
+      console.log(`🎥 Starting ${camera.name}...`);
+      await startCameraStream(camera.url, camera.id);
+      console.log(`✅ ${camera.name} started successfully`);
+    } catch (error) {
+      console.error(`❌ Failed to start ${camera.name}:`, error.message);
+    }
+  }
+
+  console.log(`🎬 Auto-load complete. ${activeStreams.size} cameras running.`);
+}
+
+// Internal function to start a camera stream
+async function startCameraStream(rtspUrl, streamId) {
+  // Validate inputs
+  const urlValidation = validateRtspUrl(rtspUrl);
+  if (!urlValidation.valid) {
+    throw new Error(urlValidation.error);
+  }
+
+  const idValidation = validateStreamId(streamId);
+  if (!idValidation.valid) {
+    throw new Error(idValidation.error);
+  }
+
+  // Check if stream already exists
+  if (activeStreams.has(streamId)) {
+    throw new Error(`Stream ${streamId} already active`);
+  }
+
+  // Check maximum concurrent streams
+  const maxStreams = process.env.MAX_CONCURRENT_STREAMS || 10;
+  if (activeStreams.size >= maxStreams) {
+    throw new Error("Maximum concurrent streams limit reached");
+  }
+
+  // Add delay for multiple cameras
+  if (activeStreams.size > 0) {
+    const delay = process.env.MULTI_CAMERA_DELAY || 2000;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  // Create HLS output directory
+  const hlsDir = path.join(__dirname, "public", "streams", streamId);
+  if (!fs.existsSync(hlsDir)) {
+    fs.mkdirSync(hlsDir, { recursive: true });
+  }
+
+  // Sanitize the RTSP URL
+  const sanitizedUrl = sanitizeInput(rtspUrl);
+
+  // Use FFmpeg configuration optimized for multiple cameras
+  const features = getBasicFFmpegFeatures();
+
+  const ffmpegArgs = [
+    "-fflags",
+    "+genpts+discardcorrupt",
+    "-err_detect",
+    "ignore_err",
+    "-rtsp_transport",
+    "tcp",
+    "-timeout",
+    "30000000",
+    "-user_agent",
+    "UniFiVideo",
+    "-thread_queue_size",
+    "1024",
+    "-analyzeduration",
+    "1000000",
+    "-probesize",
+    "1000000",
+    "-i",
+    sanitizedUrl,
+    "-c:v",
+    "libx264",
+    "-c:a",
+    "aac",
+    "-f",
+    "hls",
+    "-hls_time",
+    "3",
+    "-hls_list_size",
+    "8",
+    "-hls_flags",
+    "delete_segments+independent_segments",
+    "-preset",
+    "faster",
+    "-tune",
+    "zerolatency",
+    "-profile:v",
+    "main",
+    "-level",
+    "3.1",
+    "-g",
+    "30",
+    "-sc_threshold",
+    "0",
+    "-b:v",
+    activeStreams.size > 0 ? "1200k" : "1500k",
+    "-maxrate",
+    activeStreams.size > 0 ? "1600k" : "2000k",
+    "-bufsize",
+    activeStreams.size > 0 ? "3200k" : "4000k",
+    "-b:a",
+    activeStreams.size > 0 ? "96k" : "128k",
+    "-avoid_negative_ts",
+    "make_zero",
+    "-movflags",
+    "+faststart",
+    "-loglevel",
+    "warning",
+    path.join(hlsDir, "stream.m3u8"),
+  ];
+
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, PATH: process.env.PATH },
+    });
+
+    ffmpeg.stdout.on("data", (data) => {
+      // Silent for auto-load
+    });
+
+    ffmpeg.stderr.on("data", (data) => {
+      const message = data.toString();
+      // Only log errors for auto-load
+      if (message.includes("error") || message.includes("failed")) {
+        console.log(`FFmpeg [${streamId}]: ${message.slice(0, 100)}`);
+      }
+    });
+
+    ffmpeg.on("close", (code) => {
+      console.log(`FFmpeg process closed with code ${code} for ${streamId}`);
+      activeStreams.delete(streamId);
+
+      // Clean up HLS files
+      setTimeout(() => {
+        if (fs.existsSync(hlsDir)) {
+          try {
+            fs.rmSync(hlsDir, { recursive: true, force: true });
+          } catch (err) {
+            console.error(`Error cleaning up HLS files for ${streamId}:`, err);
+          }
+        }
+      }, 5000);
+    });
+
+    ffmpeg.on("error", (err) => {
+      console.error(`FFmpeg error for ${streamId}:`, err);
+      activeStreams.delete(streamId);
+      reject(err);
+    });
+
+    // Set timeout
+    const timeout = setTimeout(() => {
+      ffmpeg.kill("SIGTERM");
+      activeStreams.delete(streamId);
+      reject(new Error("FFmpeg timeout"));
+    }, 300000);
+
+    // Check HLS file generation
+    const checkInterval = setInterval(() => {
+      const m3u8Path = path.join(hlsDir, "stream.m3u8");
+      if (fs.existsSync(m3u8Path)) {
+        clearInterval(checkInterval);
+        clearTimeout(timeout);
+        resolve();
+      }
+    }, 5000);
+
+    // Store stream info
+    activeStreams.set(streamId, {
+      rtspUrl: sanitizedUrl,
+      ffmpegProcess: ffmpeg,
+      startTime: new Date(),
+      hlsPath: `/streams/${streamId}/stream.m3u8`,
+      timeout: timeout,
+      checkInterval: checkInterval,
+    });
+
+    // Resolve after 10 seconds if process is still running
+    setTimeout(() => {
+      if (activeStreams.has(streamId)) {
+        clearInterval(checkInterval);
+        clearTimeout(timeout);
+        resolve();
+      }
+    }, 10000);
+  });
+}
+
+// API endpoint to manage auto-loaded cameras
+app.get("/api/cameras/auto-load", (req, res) => {
+  const cameras = [];
+
+  for (let i = 1; i <= 4; i++) {
+    const url = process.env[`CAMERA_${i}_URL`];
+    const name = process.env[`CAMERA_${i}_NAME`];
+    const id = process.env[`CAMERA_${i}_ID`];
+
+    if (url && id) {
+      cameras.push({
+        index: i,
+        name: name || `Camera ${i}`,
+        id,
+        url: url.replace(/:[^:@]*@/, ":***@"), // Hide password
+        active: activeStreams.has(id),
+      });
+    }
+  }
+
+  res.json({
+    autoLoadEnabled: autoLoadCameras,
+    configuredCameras: cameras.length,
+    cameras,
+    activeStreams: activeStreams.size,
+  });
+});
+
+// API endpoint to start all configured cameras
+app.post("/api/cameras/start-all", async (req, res) => {
+  try {
+    await autoLoadConfiguredCameras();
+    res.json({
+      success: true,
+      message: "Auto-load cameras initiated",
+      activeStreams: activeStreams.size,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// API endpoint to stop all cameras
+app.post("/api/cameras/stop-all", (req, res) => {
+  try {
+    let stopped = 0;
+    for (const [streamId, stream] of activeStreams) {
+      try {
+        if (stream.timeout) {
+          clearTimeout(stream.timeout);
+        }
+        if (stream.checkInterval) {
+          clearInterval(stream.checkInterval);
+        }
+        stream.ffmpegProcess.kill("SIGTERM");
+        stopped++;
+      } catch (error) {
+        console.error(`Error stopping stream ${streamId}:`, error);
+      }
+    }
+
+    activeStreams.clear();
+
+    res.json({
+      success: true,
+      message: `Stopped ${stopped} cameras`,
+      stoppedCount: stopped,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
 
 // API endpoint to start RTSP stream
 app.post("/api/stream/start", async (req, res) => {
@@ -589,6 +905,15 @@ process.on("SIGTERM", () => {
 app.listen(PORT, () => {
   console.log(`RTSP Web Viewer server running on port ${PORT}`);
   console.log(`Open http://localhost:${PORT} in your browser`);
+
+  // Auto-load cameras after server starts
+  if (autoLoadCameras) {
+    setTimeout(() => {
+      autoLoadConfiguredCameras().catch((error) => {
+        console.error("Auto-load cameras failed:", error);
+      });
+    }, 2000); // Wait 2 seconds after server start
+  }
 });
 
 module.exports = app;
