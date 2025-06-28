@@ -48,6 +48,21 @@ app.use("/api/", apiLimiter);
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+
+// Custom middleware for HLS files with proper headers
+app.use("/streams", (req, res, next) => {
+  if (req.path.endsWith(".m3u8")) {
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  } else if (req.path.endsWith(".ts")) {
+    res.setHeader("Content-Type", "video/mp2t");
+    res.setHeader("Cache-Control", "public, max-age=31536000");
+  }
+  next();
+});
+
 app.use(express.static("public"));
 
 // Store active streams
@@ -56,6 +71,38 @@ const activeStreams = new Map();
 // Serve static files
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// Debug endpoint to check HLS files
+app.get("/api/debug/stream/:streamId", (req, res) => {
+  const { streamId } = req.params;
+  const hlsDir = path.join(__dirname, "public", "streams", streamId);
+
+  if (!fs.existsSync(hlsDir)) {
+    return res.status(404).json({ error: "Stream directory not found" });
+  }
+
+  try {
+    const files = fs.readdirSync(hlsDir);
+    const fileDetails = files.map((file) => {
+      const filePath = path.join(hlsDir, file);
+      const stats = fs.statSync(filePath);
+      return {
+        name: file,
+        size: stats.size,
+        modified: stats.mtime,
+      };
+    });
+
+    res.json({
+      streamId,
+      directory: hlsDir,
+      files: fileDetails,
+      totalFiles: files.length,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Input validation functions
@@ -214,14 +261,24 @@ app.post("/api/stream/start", async (req, res) => {
       console.log(
         `FFmpeg process closed with code ${code} for stream ${streamId}`,
       );
+
+      // Log final state of HLS directory
+      const hlsDir = path.join(__dirname, "public", "streams", streamId);
+      if (fs.existsSync(hlsDir)) {
+        const files = fs.readdirSync(hlsDir);
+        console.log(`HLS files generated for ${streamId}:`, files);
+      } else {
+        console.log(`No HLS directory found for ${streamId}`);
+      }
+
       activeStreams.delete(streamId);
 
       // Clean up HLS files on close
       setTimeout(() => {
-        const hlsDir = path.join(__dirname, "public", "streams", streamId);
         if (fs.existsSync(hlsDir)) {
           try {
             fs.rmSync(hlsDir, { recursive: true, force: true });
+            console.log(`Cleaned up HLS files for ${streamId}`);
           } catch (err) {
             console.error(`Error cleaning up HLS files for ${streamId}:`, err);
           }
@@ -234,9 +291,26 @@ app.post("/api/stream/start", async (req, res) => {
       activeStreams.delete(streamId);
     });
 
+    // Check HLS file generation periodically
+    const checkInterval = setInterval(() => {
+      const hlsDir = path.join(__dirname, "public", "streams", streamId);
+      const m3u8Path = path.join(hlsDir, "stream.m3u8");
+
+      if (fs.existsSync(m3u8Path)) {
+        const stats = fs.statSync(m3u8Path);
+        const files = fs.readdirSync(hlsDir);
+        console.log(
+          `HLS check [${streamId}]: ${files.length} files, m3u8 size: ${stats.size}`,
+        );
+      } else {
+        console.log(`HLS check [${streamId}]: No m3u8 file found yet`);
+      }
+    }, 10000); // Check every 10 seconds
+
     // Set timeout to prevent hanging processes
     const timeout = setTimeout(() => {
       console.log(`Timeout reached for stream ${streamId}, killing process`);
+      clearInterval(checkInterval);
       ffmpeg.kill("SIGTERM");
       activeStreams.delete(streamId);
     }, 300000); // 5 minutes timeout
@@ -248,6 +322,7 @@ app.post("/api/stream/start", async (req, res) => {
       startTime: new Date(),
       hlsPath: `/streams/${streamId}/stream.m3u8`,
       timeout: timeout,
+      checkInterval: checkInterval,
     });
 
     res.json({
@@ -282,9 +357,12 @@ app.post("/api/stream/stop", (req, res) => {
   }
 
   try {
-    // Clear timeout if exists
+    // Clear timeout and interval if exists
     if (stream.timeout) {
       clearTimeout(stream.timeout);
+    }
+    if (stream.checkInterval) {
+      clearInterval(stream.checkInterval);
     }
 
     // Kill FFmpeg process
@@ -359,9 +437,12 @@ const cleanup = () => {
   console.log("Cleaning up active streams...");
   for (const [streamId, stream] of activeStreams) {
     try {
-      // Clear timeouts
+      // Clear timeouts and intervals
       if (stream.timeout) {
         clearTimeout(stream.timeout);
+      }
+      if (stream.checkInterval) {
+        clearInterval(stream.checkInterval);
       }
 
       // Kill processes
