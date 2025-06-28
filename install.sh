@@ -138,7 +138,7 @@ download_project() {
     local install_dir="${PROJECT_NAME}"
 
     # Check if custom directory was provided
-    if [ $# -gt 0 ]; then
+    if [ ! -z "$1" ]; then
         install_dir="$1"
     fi
 
@@ -157,14 +157,47 @@ download_project() {
     fi
 
     # Clone repository
-    if git clone "$REPO_URL.git" "$install_dir"; then
+    log_info "Cloning repository to $install_dir..."
+    if git clone "$REPO_URL.git" "$install_dir" 2>/dev/null; then
         log_success "Repository cloned successfully"
     else
-        log_error "Failed to clone repository"
-        exit 1
+        log_warning "Git clone failed, trying direct download..."
+
+        # Fallback: Download as ZIP using curl
+        if command_exists curl; then
+            log_info "Downloading project as ZIP archive..."
+            mkdir -p "$install_dir"
+            if curl -L "$REPO_URL/archive/refs/heads/main.zip" -o "$install_dir/project.zip" 2>/dev/null; then
+                cd "$install_dir"
+                if command_exists unzip; then
+                    unzip -q project.zip
+                    mv rtsp-web-viewer-main/* .
+                    mv rtsp-web-viewer-main/.* . 2>/dev/null || true
+                    rm -rf rtsp-web-viewer-main project.zip
+                    log_success "Project downloaded and extracted successfully"
+                else
+                    log_error "unzip command not found. Please install unzip or use git clone"
+                    exit 1
+                fi
+            else
+                log_error "Failed to download project archive"
+                exit 1
+            fi
+        else
+            log_error "Neither git nor curl available. Please install one of them"
+            log_error "Git: https://git-scm.com/"
+            log_error "Curl: typically pre-installed or available via package manager"
+            exit 1
+        fi
     fi
 
-    cd "$install_dir"
+    # Change to project directory
+    if cd "$install_dir"; then
+        log_success "Changed to project directory"
+    else
+        log_error "Failed to change to project directory"
+        exit 1
+    fi
 }
 
 install_npm_dependencies() {
@@ -321,4 +354,9 @@ fi
 log_info "Starting RTSP Web Viewer installation..."
 echo ""
 
-main "$@"
+# Pass the first argument if provided
+if [ $# -gt 0 ]; then
+    main "$1"
+else
+    main
+fi
