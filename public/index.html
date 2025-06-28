@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTSP Web Viewer</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📹 RTSP Web Viewer</h1>
+            <p>Visualiza cámaras RTSP en tu navegador web</p>
+        </header>
+
+        <main>
+            <!-- Control Panel -->
+            <section class="control-panel">
+                <h2>Control de Cámaras</h2>
+                <div class="form-group">
+                    <label for="rtsp-url">URL RTSP:</label>
+                    <input type="text" id="rtsp-url" placeholder="rtsp://username:password@ip:port/stream"
+                           value="rtsp://admin:admin@192.168.1.100:554/stream">
+                    <small>Ejemplo: rtsp://admin:password@192.168.1.100:554/stream1</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="stream-id">ID del Stream:</label>
+                    <input type="text" id="stream-id" placeholder="camera-1" value="camera-1">
+                    <small>Identificador único para este stream</small>
+                </div>
+
+                <div class="button-group">
+                    <button id="start-stream" class="btn btn-primary">🎬 Iniciar Stream</button>
+                    <button id="stop-stream" class="btn btn-danger">🛑 Detener Stream</button>
+                    <button id="refresh-streams" class="btn btn-secondary">🔄 Actualizar</button>
+                </div>
+            </section>
+
+            <!-- Status Panel -->
+            <section class="status-panel">
+                <h3>Estado del Sistema</h3>
+                <div id="status-info" class="status-info">
+                    <span id="connection-status" class="status-indicator">🔴 Desconectado</span>
+                    <span id="stream-count">Streams activos: 0</span>
+                </div>
+            </section>
+
+            <!-- Video Player -->
+            <section class="video-section">
+                <h2>Visualización de Video</h2>
+                <div class="video-container">
+                    <video id="video-player" controls autoplay muted>
+                        <p>Tu navegador no soporta el elemento video.</p>
+                    </video>
+                    <div id="video-status" class="video-status">
+                        <span>Selecciona un stream para comenzar</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Active Streams -->
+            <section class="streams-section">
+                <h2>Streams Activos</h2>
+                <div id="streams-list" class="streams-list">
+                    <div class="no-streams">
+                        <p>No hay streams activos</p>
+                        <small>Configura una URL RTSP arriba para comenzar</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Logs -->
+            <section class="logs-section">
+                <h2>Registro de Actividad</h2>
+                <div id="logs-container" class="logs-container">
+                    <div class="log-entry info">
+                        <span class="timestamp">[${new Date().toLocaleTimeString()}]</span>
+                        <span class="message">Sistema iniciado correctamente</span>
+                    </div>
+                </div>
+                <button id="clear-logs" class="btn btn-small">🗑️ Limpiar Logs</button>
+            </section>
+        </main>
+
+        <!-- Modal for Stream Details -->
+        <div id="stream-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h3>Detalles del Stream</h3>
+                <div id="stream-details"></div>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toast-container" class="toast-container"></div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+        <p>&copy; 2024 RTSP Web Viewer | Requiere FFmpeg instalado en el servidor</p>
+    </footer>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
