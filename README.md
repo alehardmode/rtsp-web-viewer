@@ -48,35 +48,62 @@ Una aplicación web moderna para visualizar cámaras RTSP directamente en tu nav
 
 ## 🚀 Instalación Rápida
 
-### Opción 1: Instalación Automática (Recomendada)
+### ⚡ Instalación con Una Línea (Recomendado)
 ```bash
-# Navegar al directorio del proyecto
+# Instalar y configurar automáticamente
+curl -fsSL https://raw.githubusercontent.com/alehardmode/rtsp-web-viewer/main/install.sh | bash
+
+# O con wget
+wget -qO- https://raw.githubusercontent.com/alehardmode/rtsp-web-viewer/main/install.sh | bash
+
+# O especificar directorio personalizado
+curl -fsSL https://raw.githubusercontent.com/alehardmode/rtsp-web-viewer/main/install.sh | bash -s mi-proyecto
+```
+
+### 📦 Instalación con npm (Global)
+```bash
+# Instalar globalmente
+npm install -g rtsp-web-viewer
+
+# Configurar y ejecutar
+rtsp-web-viewer install
+rtsp-web-viewer start
+```
+
+### 🛠️ Instalación Manual
+```bash
+# 1. Clonar repositorio
+git clone https://github.com/alehardmode/rtsp-web-viewer.git
 cd rtsp-web-viewer
 
-# Ejecutar script de instalación automática
+# 2. Ejecutar instalación automática
 chmod +x start.sh
 ./start.sh
 ```
 
-### Opción 2: Instalación Manual
+### 🔧 Instalación Paso a Paso
 ```bash
-# 1. Instalar dependencias
+# 1. Clonar y navegar
+git clone https://github.com/alehardmode/rtsp-web-viewer.git
+cd rtsp-web-viewer
+
+# 2. Instalar dependencias
 npm install
 
-# 2. Verificar que no hay vulnerabilidades
+# 3. Verificar seguridad
 npm audit
 
-# 3. Crear directorios necesarios
+# 4. Crear directorios necesarios
 mkdir -p public/streams logs
 
-# 4. Configurar variables de entorno (opcional)
+# 5. Configurar variables de entorno (opcional)
 cp .env.example .env
 
-# 5. Iniciar el servidor
+# 6. Iniciar el servidor
 npm start
 ```
 
-### Abrir la Aplicación
+### 🌐 Acceder a la Aplicación
 ```
 http://localhost:3000
 ```
@@ -321,19 +348,43 @@ Para soporte técnico:
 
 ## 🧪 Probar la Aplicación
 
-### Pruebas Automáticas
+### 🎯 Comandos CLI (si instalaste globalmente)
+```bash
+# Comando principal
+rtsp-web-viewer --help
+
+# Inicio rápido
+rtsp-web-viewer start
+
+# Demo interactivo
+rtsp-web-viewer demo
+
+# Ejecutar pruebas
+rtsp-web-viewer test
+
+# Ver estado
+rtsp-web-viewer status
+```
+
+### 🧪 Pruebas Automáticas
 ```bash
 # Ejecutar suite completa de pruebas
 ./test.sh
 
 # Ver resultados detallados
 cat test-results.log
+
+# O con CLI global
+rtsp-web-viewer test
 ```
 
-### Demostración Interactiva
+### 🎬 Demostración Interactiva
 ```bash
 # Configurar demo con streams de ejemplo
 ./demo.sh
+
+# O con CLI global
+rtsp-web-viewer demo
 
 # Seguir las instrucciones en pantalla
 ```
@@ -399,6 +450,15 @@ ffmpeg -version
 # Si hay problemas de puerto
 PORT=3001 npm start
 ```
+
+### 📥 Métodos de Instalación Disponibles
+
+| Método | Comando | Descripción |
+|--------|---------|-------------|
+| **Una línea** | `curl -fsSL https://raw.githubusercontent.com/alehardmode/rtsp-web-viewer/main/install.sh \| bash` | Instalación completamente automática |
+| **npm global** | `npm install -g rtsp-web-viewer && rtsp-web-viewer install` | Instalar como comando global |
+| **Git clone** | `git clone https://github.com/alehardmode/rtsp-web-viewer.git` | Clonar repositorio manualmente |
+| **ZIP download** | Descargar desde GitHub | Descargar archivo ZIP del repositorio |
 
 Para guía completa de pruebas, consulta: **[TESTING_GUIDE.md](TESTING_GUIDE.md)**
 

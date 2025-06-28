@@ -1,0 +1,425 @@
+#!/usr/bin/env node
+
+/**
+ * RTSP Web Viewer CLI
+ * Command-line interface for managing RTSP Web Viewer
+ *
+ * @author Alejandro (alehardmode)
+ * @license MIT
+ */
+
+const { spawn, exec } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+// Colors for console output
+const colors = {
+    reset: '\x1b[0m',
+    bright: '\x1b[1m',
+    red: '\x1b[31m',
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    blue: '\x1b[34m',
+    magenta: '\x1b[35m',
+    cyan: '\x1b[36m'
+};
+
+// Helper functions
+const log = {
+    info: (msg) => console.log(`${colors.blue}[INFO]${colors.reset} ${msg}`),
+    success: (msg) => console.log(`${colors.green}[SUCCESS]${colors.reset} ${msg}`),
+    warning: (msg) => console.log(`${colors.yellow}[WARNING]${colors.reset} ${msg}`),
+    error: (msg) => console.log(`${colors.red}[ERROR]${colors.reset} ${msg}`),
+    title: (msg) => console.log(`${colors.cyan}${colors.bright}${msg}${colors.reset}`)
+};
+
+// Banner
+const showBanner = () => {
+    console.log(`${colors.magenta}
+╔══════════════════════════════════════════════════════════╗
+║               📹 RTSP Web Viewer CLI                     ║
+║          Command-line interface and manager             ║
+║                                                          ║
+║  Repository: github.com/alehardmode/rtsp-web-viewer      ║
+║  Author: Alejandro (alehardmode)                         ║
+║  License: MIT                                            ║
+╚══════════════════════════════════════════════════════════╝
+${colors.reset}`);
+};
+
+// Help message
+const showHelp = () => {
+    showBanner();
+    console.log(`
+${colors.bright}USAGE:${colors.reset}
+  rtsp-web-viewer <command> [options]
+
+${colors.bright}COMMANDS:${colors.reset}
+  ${colors.green}start${colors.reset}              Start the RTSP Web Viewer server
+  ${colors.green}dev${colors.reset}                Start in development mode with auto-reload
+  ${colors.green}stop${colors.reset}               Stop the running server
+  ${colors.green}restart${colors.reset}            Restart the server
+  ${colors.green}status${colors.reset}             Check server status
+  ${colors.green}install${colors.reset}            Install and setup the application
+  ${colors.green}test${colors.reset}               Run the test suite
+  ${colors.green}demo${colors.reset}               Run interactive demo
+  ${colors.green}config${colors.reset}             Show current configuration
+  ${colors.green}logs${colors.reset}               Show application logs
+  ${colors.green}update${colors.reset}             Update to latest version
+  ${colors.green}uninstall${colors.reset}          Uninstall the application
+
+${colors.bright}OPTIONS:${colors.reset}
+  -p, --port <port>      Specify port (default: 3000)
+  -h, --help             Show this help message
+  -v, --version          Show version information
+  --verbose              Enable verbose output
+
+${colors.bright}EXAMPLES:${colors.reset}
+  rtsp-web-viewer start                 # Start server on default port
+  rtsp-web-viewer start --port 8080     # Start server on port 8080
+  rtsp-web-viewer demo                  # Run interactive demo
+  rtsp-web-viewer test                  # Run all tests
+  rtsp-web-viewer logs                  # Show recent logs
+
+${colors.bright}GETTING STARTED:${colors.reset}
+  1. rtsp-web-viewer install            # Initial setup
+  2. rtsp-web-viewer start              # Start server
+  3. Open http://localhost:3000         # Access web interface
+
+${colors.bright}MORE INFO:${colors.reset}
+  Repository: https://github.com/alehardmode/rtsp-web-viewer
+  Documentation: README.md, TESTING_GUIDE.md, SECURITY.md
+`);
+};
+
+// Version information
+const showVersion = () => {
+    const packageJson = require('../package.json');
+    console.log(`${colors.cyan}RTSP Web Viewer${colors.reset} v${packageJson.version}`);
+    console.log(`Node.js: ${process.version}`);
+    console.log(`Platform: ${os.platform()} ${os.arch()}`);
+    console.log(`Author: ${packageJson.author}`);
+    console.log(`License: ${packageJson.license}`);
+};
+
+// Find project root
+const findProjectRoot = () => {
+    let currentDir = __dirname;
+    while (currentDir !== path.parse(currentDir).root) {
+        if (fs.existsSync(path.join(currentDir, 'package.json'))) {
+            const packageJson = JSON.parse(fs.readFileSync(path.join(currentDir, 'package.json'), 'utf8'));
+            if (packageJson.name === 'rtsp-web-viewer') {
+                return currentDir;
+            }
+        }
+        currentDir = path.dirname(currentDir);
+    }
+    return process.cwd();
+};
+
+// Execute command
+const executeCommand = (command, args = [], options = {}) => {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, {
+            stdio: 'inherit',
+            shell: true,
+            ...options
+        });
+
+        child.on('close', (code) => {
+            if (code === 0) {
+                resolve(code);
+            } else {
+                reject(new Error(`Command failed with exit code ${code}`));
+            }
+        });
+
+        child.on('error', (error) => {
+            reject(error);
+        });
+    });
+};
+
+// Check if server is running
+const checkServerStatus = async (port = 3000) => {
+    return new Promise((resolve) => {
+        const http = require('http');
+        const req = http.request({
+            hostname: 'localhost',
+            port: port,
+            path: '/',
+            method: 'GET',
+            timeout: 2000
+        }, (res) => {
+            resolve(true);
+        });
+
+        req.on('error', () => {
+            resolve(false);
+        });
+
+        req.on('timeout', () => {
+            resolve(false);
+        });
+
+        req.end();
+    });
+};
+
+// Main command handlers
+const commands = {
+    start: async (args) => {
+        const projectRoot = findProjectRoot();
+        const port = args.port || process.env.PORT || 3000;
+
+        log.info(`Starting RTSP Web Viewer on port ${port}...`);
+
+        try {
+            process.chdir(projectRoot);
+            if (args.port) {
+                process.env.PORT = args.port;
+            }
+            await executeCommand('node', ['server.js']);
+        } catch (error) {
+            log.error(`Failed to start server: ${error.message}`);
+            process.exit(1);
+        }
+    },
+
+    dev: async (args) => {
+        const projectRoot = findProjectRoot();
+        log.info('Starting RTSP Web Viewer in development mode...');
+
+        try {
+            process.chdir(projectRoot);
+            await executeCommand('npm', ['run', 'dev']);
+        } catch (error) {
+            log.error(`Failed to start in dev mode: ${error.message}`);
+            process.exit(1);
+        }
+    },
+
+    stop: async () => {
+        log.info('Stopping RTSP Web Viewer...');
+        try {
+            if (process.platform === 'win32') {
+                await executeCommand('taskkill', ['/f', '/im', 'node.exe']);
+            } else {
+                await executeCommand('pkill', ['-f', 'rtsp-web-viewer']);
+            }
+            log.success('Server stopped successfully');
+        } catch (error) {
+            log.warning('No running server found or failed to stop');
+        }
+    },
+
+    status: async (args) => {
+        const port = args.port || 3000;
+        log.info(`Checking server status on port ${port}...`);
+
+        const isRunning = await checkServerStatus(port);
+        if (isRunning) {
+            log.success(`Server is running on http://localhost:${port}`);
+        } else {
+            log.warning('Server is not running');
+        }
+    },
+
+    install: async () => {
+        const projectRoot = findProjectRoot();
+        log.info('Running installation and setup...');
+
+        try {
+            process.chdir(projectRoot);
+            await executeCommand('./start.sh');
+        } catch (error) {
+            log.error(`Installation failed: ${error.message}`);
+            process.exit(1);
+        }
+    },
+
+    test: async () => {
+        const projectRoot = findProjectRoot();
+        log.info('Running test suite...');
+
+        try {
+            process.chdir(projectRoot);
+            await executeCommand('./test.sh');
+        } catch (error) {
+            log.error(`Tests failed: ${error.message}`);
+            process.exit(1);
+        }
+    },
+
+    demo: async () => {
+        const projectRoot = findProjectRoot();
+        log.info('Starting interactive demo...');
+
+        try {
+            process.chdir(projectRoot);
+            await executeCommand('./demo.sh');
+        } catch (error) {
+            log.error(`Demo failed: ${error.message}`);
+            process.exit(1);
+        }
+    },
+
+    config: async () => {
+        const projectRoot = findProjectRoot();
+        log.info('Current configuration:');
+
+        try {
+            const envPath = path.join(projectRoot, '.env');
+            if (fs.existsSync(envPath)) {
+                const envContent = fs.readFileSync(envPath, 'utf8');
+                console.log('\n📄 .env file:');
+                console.log(envContent);
+            } else {
+                log.warning('No .env file found');
+            }
+
+            const packageJson = require(path.join(projectRoot, 'package.json'));
+            console.log('\n📦 Package info:');
+            console.log(`Name: ${packageJson.name}`);
+            console.log(`Version: ${packageJson.version}`);
+            console.log(`Author: ${packageJson.author}`);
+
+        } catch (error) {
+            log.error(`Failed to read configuration: ${error.message}`);
+        }
+    },
+
+    logs: async () => {
+        const projectRoot = findProjectRoot();
+        const logsDir = path.join(projectRoot, 'logs');
+
+        log.info('Showing recent logs...');
+
+        try {
+            if (fs.existsSync(logsDir)) {
+                await executeCommand('tail', ['-n', '50', path.join(logsDir, '*.log')]);
+            } else {
+                log.warning('No logs directory found');
+            }
+        } catch (error) {
+            log.warning('Failed to read logs or no logs available');
+        }
+    },
+
+    update: async () => {
+        const projectRoot = findProjectRoot();
+        log.info('Updating RTSP Web Viewer...');
+
+        try {
+            process.chdir(projectRoot);
+            await executeCommand('git', ['pull', 'origin', 'main']);
+            await executeCommand('npm', ['install']);
+            log.success('Update completed successfully');
+        } catch (error) {
+            log.error(`Update failed: ${error.message}`);
+            process.exit(1);
+        }
+    },
+
+    uninstall: async () => {
+        log.warning('This will remove RTSP Web Viewer from your system');
+        // Note: Implementation would depend on how it was installed
+        log.info('To uninstall, remove the project directory and any global npm packages');
+    }
+};
+
+// Parse command line arguments
+const parseArgs = (argv) => {
+    const args = {};
+    const flags = [];
+
+    for (let i = 2; i < argv.length; i++) {
+        const arg = argv[i];
+
+        if (arg.startsWith('--')) {
+            const [key, value] = arg.slice(2).split('=');
+            if (value) {
+                args[key] = value;
+            } else if (argv[i + 1] && !argv[i + 1].startsWith('-')) {
+                args[key] = argv[++i];
+            } else {
+                args[key] = true;
+            }
+        } else if (arg.startsWith('-') && arg.length > 1) {
+            if (arg === '-p' && argv[i + 1] && !argv[i + 1].startsWith('-')) {
+                args.port = argv[++i];
+            } else if (arg === '-h') {
+                args.help = true;
+            } else if (arg === '-v') {
+                args.version = true;
+            } else {
+                flags.push(arg.slice(1));
+            }
+        } else {
+            if (!args.command) {
+                args.command = arg;
+            }
+        }
+    }
+
+    return args;
+};
+
+// Main function
+const main = async () => {
+    const args = parseArgs(process.argv);
+
+    // Handle help and version flags
+    if (args.help) {
+        showHelp();
+        return;
+    }
+
+    if (args.version) {
+        showVersion();
+        return;
+    }
+
+    // Show banner for interactive commands
+    if (!args.command || ['demo', 'install'].includes(args.command)) {
+        showBanner();
+    }
+
+    // Execute command
+    const command = args.command || 'help';
+
+    if (commands[command]) {
+        try {
+            await commands[command](args);
+        } catch (error) {
+            log.error(`Command '${command}' failed: ${error.message}`);
+            process.exit(1);
+        }
+    } else {
+        log.error(`Unknown command: ${command}`);
+        console.log('\nUse "rtsp-web-viewer --help" for available commands.');
+        process.exit(1);
+    }
+};
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+    log.error(`Uncaught exception: ${error.message}`);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    log.error(`Unhandled rejection at: ${promise}, reason: ${reason}`);
+    process.exit(1);
+});
+
+// Run main function
+if (require.main === module) {
+    main().catch((error) => {
+        log.error(`Application error: ${error.message}`);
+        process.exit(1);
+    });
+}
+
+module.exports = { main, commands, parseArgs };
