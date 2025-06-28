@@ -66,6 +66,39 @@ check_node_version() {
     fi
 }
 
+find_best_install_dir() {
+    local requested_dir="$1"
+    local default_dir="${PROJECT_NAME}"
+
+    # If specific directory requested, use it
+    if [ ! -z "$requested_dir" ]; then
+        echo "$requested_dir"
+        return
+    fi
+
+    # Try current directory first
+    if touch .test-write-permissions 2>/dev/null; then
+        rm -f .test-write-permissions
+        echo "$default_dir"
+        return
+    fi
+
+    # Try home directory
+    if [ -w "$HOME" ]; then
+        echo "$HOME/$default_dir"
+        return
+    fi
+
+    # Try /tmp as last resort
+    if [ -w "/tmp" ]; then
+        echo "/tmp/$default_dir"
+        return
+    fi
+
+    # No writable directory found
+    echo ""
+}
+
 install_dependencies() {
     log_info "Checking system dependencies..."
 
@@ -134,13 +167,23 @@ install_dependencies() {
 download_project() {
     log_info "Downloading RTSP Web Viewer..."
 
-    # Default installation directory
-    local install_dir="${PROJECT_NAME}"
+    # Find best installation directory
+    local install_dir=$(find_best_install_dir "$1")
 
-    # Check if custom directory was provided
-    if [ ! -z "$1" ]; then
-        install_dir="$1"
+    if [ -z "$install_dir" ]; then
+        log_error "No writable directory found for installation"
+        log_info "Current directory: $(pwd) (no write permissions)"
+        log_info "Home directory: $HOME (not accessible)"
+        log_info ""
+        log_info "Suggestions:"
+        echo "  1. cd ~                    # Install in your home directory"
+        echo "  2. mkdir -p ~/projects && cd ~/projects  # Create and use projects directory"
+        echo "  3. sudo chown \$USER:\$USER $(pwd)        # Fix permissions (if you own this directory)"
+        echo ""
+        exit 1
     fi
+
+    log_info "Installing to: $install_dir"
 
     # Check if directory already exists
     if [ -d "$install_dir" ]; then
@@ -148,8 +191,13 @@ download_project() {
         read -p "Remove existing directory? (y/N): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            rm -rf "$install_dir"
-            log_info "Removed existing directory"
+            if rm -rf "$install_dir" 2>/dev/null; then
+                log_info "Removed existing directory"
+            else
+                log_error "Cannot remove existing directory (permission denied)"
+                log_info "Try: sudo rm -rf $install_dir"
+                exit 1
+            fi
         else
             log_error "Installation cancelled"
             exit 1
@@ -166,21 +214,31 @@ download_project() {
         # Fallback: Download as ZIP using curl
         if command_exists curl; then
             log_info "Downloading project as ZIP archive..."
-            mkdir -p "$install_dir"
-            if curl -L "$REPO_URL/archive/refs/heads/main.zip" -o "$install_dir/project.zip" 2>/dev/null; then
-                cd "$install_dir"
-                if command_exists unzip; then
-                    unzip -q project.zip
-                    mv rtsp-web-viewer-main/* .
-                    mv rtsp-web-viewer-main/.* . 2>/dev/null || true
-                    rm -rf rtsp-web-viewer-main project.zip
-                    log_success "Project downloaded and extracted successfully"
+            if mkdir -p "$install_dir" 2>/dev/null; then
+                if curl -L "$REPO_URL/archive/refs/heads/main.zip" -o "$install_dir/project.zip" 2>/dev/null; then
+                    cd "$install_dir"
+                    if command_exists unzip; then
+                        unzip -q project.zip
+                        mv rtsp-web-viewer-main/* .
+                        mv rtsp-web-viewer-main/.* . 2>/dev/null || true
+                        rm -rf rtsp-web-viewer-main project.zip
+                        log_success "Project downloaded and extracted successfully"
+                    else
+                        log_error "unzip command not found. Please install unzip or use git clone"
+                        log_info "Ubuntu/Debian: sudo apt install unzip"
+                        log_info "CentOS/RHEL: sudo yum install unzip"
+                        exit 1
+                    fi
                 else
-                    log_error "unzip command not found. Please install unzip or use git clone"
+                    log_error "Failed to download project archive"
+                    log_error "Check your internet connection"
                     exit 1
                 fi
             else
-                log_error "Failed to download project archive"
+                log_error "Cannot create directory '$install_dir' (permission denied)"
+                log_info "Current directory: $(pwd)"
+                log_info "Try installing in a directory where you have write permissions:"
+                echo "  cd ~ && curl -fsSL https://raw.githubusercontent.com/alehardmode/rtsp-web-viewer/main/install.sh | bash"
                 exit 1
             fi
         else
