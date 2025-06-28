@@ -201,19 +201,31 @@ app.post("/api/stream/start", async (req, res) => {
     // Detect FFmpeg features for compatibility
     const features = await detectFFmpegFeatures();
 
-    // FFmpeg command to convert RTSP to HLS with security considerations
+    // FFmpeg command to convert RTSP to HLS with optimized parameters for packet loss
     const ffmpegArgs = [
       "-timeout",
       "30000000",
       "-fflags",
-      "+genpts",
+      "+genpts+discardcorrupt",
       "-threads",
       "1",
+      "-max_delay",
+      "500000",
+      "-reorder_queue_size",
+      "1000",
+      "-buffer_size",
+      "1024000",
+      "-analyzeduration",
+      "1000000",
+      "-probesize",
+      "1000000",
+      "-sync",
+      "ext",
     ];
 
     // Add RTSP transport if supported
     if (features.supportsRtspTransport) {
-      ffmpegArgs.push("-rtsp_transport", "tcp");
+      ffmpegArgs.push("-rtsp_transport", "tcp", "-rtsp_flags", "prefer_tcp");
     }
 
     // Add reconnect options if supported
@@ -239,11 +251,11 @@ app.post("/api/stream/start", async (req, res) => {
       "-f",
       "hls",
       "-hls_time",
-      "2",
+      "4",
       "-hls_list_size",
-      "10",
+      "6",
       "-hls_flags",
-      "delete_segments",
+      "delete_segments+independent_segments",
       "-preset",
       "ultrafast",
       "-tune",
@@ -254,6 +266,12 @@ app.post("/api/stream/start", async (req, res) => {
       "0",
       "-avoid_negative_ts",
       "make_zero",
+      "-err_detect",
+      "ignore_err",
+      "-recovery_wait_time",
+      "1",
+      "-stimeout",
+      "5000000",
       "-loglevel",
       "warning",
       path.join(hlsDir, "stream.m3u8"),
