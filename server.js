@@ -96,65 +96,24 @@ function sanitizeInput(input) {
   return input.replace(/[;&|`$(){}[\]\\]/g, "");
 }
 
-// Detect FFmpeg features for compatibility
-async function detectFFmpegFeatures() {
+// Use minimal safe FFmpeg parameters for maximum compatibility
+function getBasicFFmpegFeatures() {
   if (ffmpegFeatures !== null) {
     return ffmpegFeatures;
   }
 
-  return new Promise((resolve) => {
-    const ffmpeg = spawn("ffmpeg", ["-h", "full"], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+  // Set conservative defaults that work across most FFmpeg versions
+  ffmpegFeatures = {
+    supportsReconnect: false,
+    supportsRtspTransport: true,
+    supportsSync: false,
+    supportsMaxDelay: false,
+    supportsErrDetect: false,
+    version: "6.1.1-compatible",
+  };
 
-    let stderr = "";
-    let stdout = "";
-
-    ffmpeg.stdout.on("data", (data) => {
-      stdout += data.toString();
-    });
-
-    ffmpeg.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
-
-    ffmpeg.on("close", () => {
-      const helpText = stdout + stderr;
-      ffmpegFeatures = {
-        supportsReconnect: helpText.includes("-reconnect"),
-        supportsRtspTransport: helpText.includes("-rtsp_transport"),
-        supportsSync: helpText.includes("-sync"),
-        supportsMaxDelay: helpText.includes("-max_delay"),
-        supportsErrDetect: helpText.includes("-err_detect"),
-        version: helpText.match(/ffmpeg version ([^\s]+)/)?.[1] || "unknown",
-      };
-      console.log("FFmpeg features detected:", ffmpegFeatures);
-      resolve(ffmpegFeatures);
-    });
-
-    ffmpeg.on("error", () => {
-      // Fallback for basic compatibility
-      ffmpegFeatures = {
-        supportsReconnect: false,
-        supportsRtspTransport: false,
-        supportsSync: false,
-        supportsMaxDelay: false,
-        supportsErrDetect: false,
-        version: "unknown",
-      };
-      console.log("FFmpeg features detected (fallback):", ffmpegFeatures);
-      resolve(ffmpegFeatures);
-    });
-
-    // Kill after 5 seconds if still running
-    setTimeout(() => {
-      try {
-        ffmpeg.kill("SIGTERM");
-      } catch (e) {
-        // Process might already be dead
-      }
-    }, 5000);
-  });
+  console.log("Using conservative FFmpeg parameters:", ffmpegFeatures);
+  return ffmpegFeatures;
 }
 
 // API endpoint to start RTSP stream
@@ -201,48 +160,11 @@ app.post("/api/stream/start", async (req, res) => {
     // Sanitize the RTSP URL to prevent command injection
     const sanitizedUrl = sanitizeInput(rtspUrl);
 
-    // Detect FFmpeg features for compatibility
-    const features = await detectFFmpegFeatures();
+    // Use basic FFmpeg configuration for compatibility
+    const features = getBasicFFmpegFeatures();
 
-    // FFmpeg command to convert RTSP to HLS with compatible parameters
+    // FFmpeg command with minimal, widely compatible parameters
     const ffmpegArgs = [
-      "-fflags",
-      "+genpts",
-      "-threads",
-      "1",
-      "-analyzeduration",
-      "1000000",
-      "-probesize",
-      "1000000",
-    ];
-
-    // Add basic timeout
-    ffmpegArgs.push("-timeout", "30000000");
-
-    // Add RTSP transport if supported
-    if (features.supportsRtspTransport) {
-      ffmpegArgs.push("-rtsp_transport", "tcp");
-    }
-
-    // Add advanced options if supported
-    if (features.supportsMaxDelay) {
-      ffmpegArgs.push("-max_delay", "500000");
-    }
-
-    // Add reconnect options if supported
-    if (features.supportsReconnect) {
-      ffmpegArgs.push(
-        "-reconnect",
-        "1",
-        "-reconnect_streamed",
-        "1",
-        "-reconnect_delay_max",
-        "5",
-      );
-    }
-
-    // Add input and output parameters
-    ffmpegArgs.push(
       "-i",
       sanitizedUrl,
       "-c:v",
@@ -252,11 +174,11 @@ app.post("/api/stream/start", async (req, res) => {
       "-f",
       "hls",
       "-hls_time",
-      "4",
+      "2",
       "-hls_list_size",
-      "6",
+      "10",
       "-hls_flags",
-      "delete_segments+independent_segments",
+      "delete_segments",
       "-preset",
       "ultrafast",
       "-tune",
@@ -268,9 +190,9 @@ app.post("/api/stream/start", async (req, res) => {
       "-avoid_negative_ts",
       "make_zero",
       "-loglevel",
-      "warning",
+      "error",
       path.join(hlsDir, "stream.m3u8"),
-    );
+    ];
 
     const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
       stdio: ["pipe", "pipe", "pipe"],
