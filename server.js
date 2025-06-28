@@ -68,6 +68,14 @@ app.use(express.static("public"));
 // Store active streams
 const activeStreams = new Map();
 
+// Resource monitoring for multiple cameras
+let systemResources = {
+  cpuUsage: 0,
+  memoryUsage: 0,
+  activeProcesses: 0,
+  lastCheck: Date.now(),
+};
+
 // Serve static files
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
@@ -103,6 +111,29 @@ app.get("/api/debug/stream/:streamId", (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// System monitoring endpoint for multiple cameras
+app.get("/api/system/status", (req, res) => {
+  const used = process.memoryUsage();
+  const uptime = process.uptime();
+
+  res.json({
+    system: {
+      uptime: Math.floor(uptime),
+      memory: {
+        used: Math.round((used.heapUsed / 1024 / 1024) * 100) / 100,
+        total: Math.round((used.heapTotal / 1024 / 1024) * 100) / 100,
+      },
+      cpu: process.cpuUsage(),
+    },
+    streams: {
+      active: activeStreams.size,
+      maximum: process.env.MAX_CONCURRENT_STREAMS || 10,
+      list: Array.from(activeStreams.keys()),
+    },
+    resources: systemResources,
+  });
 });
 
 // Input validation functions
@@ -163,6 +194,26 @@ function getBasicFFmpegFeatures() {
   return ffmpegFeatures;
 }
 
+// Monitor system resources for multiple cameras
+function monitorResources() {
+  const used = process.memoryUsage();
+  systemResources = {
+    cpuUsage: process.cpuUsage(),
+    memoryUsage: Math.round((used.heapUsed / 1024 / 1024) * 100) / 100,
+    activeProcesses: activeStreams.size,
+    lastCheck: Date.now(),
+  };
+
+  if (systemResources.activeProcesses > 1) {
+    console.log(
+      `System resources: ${systemResources.memoryUsage}MB memory, ${systemResources.activeProcesses} active streams`,
+    );
+  }
+}
+
+// Check resources every 30 seconds
+setInterval(monitorResources, 30000);
+
 // API endpoint to start RTSP stream
 app.post("/api/stream/start", async (req, res) => {
   const { rtspUrl, streamId } = req.body;
@@ -190,11 +241,18 @@ app.post("/api/stream/start", async (req, res) => {
   }
 
   // Check maximum concurrent streams
-  const maxStreams = process.env.MAX_CONCURRENT_STREAMS || 5;
+  const maxStreams = process.env.MAX_CONCURRENT_STREAMS || 10;
   if (activeStreams.size >= maxStreams) {
     return res
       .status(429)
       .json({ error: "Maximum concurrent streams limit reached" });
+  }
+
+  // Add delay between multiple camera starts to prevent resource conflicts
+  if (activeStreams.size > 0) {
+    const delay = process.env.MULTI_CAMERA_DELAY || 2000;
+    console.log(`Multiple cameras detected, adding ${delay}ms delay...`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 
   try {
@@ -222,6 +280,12 @@ app.post("/api/stream/start", async (req, res) => {
       "30000000",
       "-user_agent",
       "UniFiVideo",
+      "-thread_queue_size",
+      "1024",
+      "-analyzeduration",
+      "1000000",
+      "-probesize",
+      "1000000",
       "-i",
       sanitizedUrl,
       "-c:v",
@@ -249,11 +313,13 @@ app.post("/api/stream/start", async (req, res) => {
       "-sc_threshold",
       "0",
       "-b:v",
-      "2000k",
+      activeStreams.size > 1 ? "1200k" : "1500k",
       "-maxrate",
-      "2500k",
+      activeStreams.size > 1 ? "1600k" : "2000k",
       "-bufsize",
-      "5000k",
+      activeStreams.size > 1 ? "3200k" : "4000k",
+      "-b:a",
+      activeStreams.size > 1 ? "96k" : "128k",
       "-avoid_negative_ts",
       "make_zero",
       "-movflags",
@@ -281,7 +347,7 @@ app.post("/api/stream/start", async (req, res) => {
 
     ffmpeg.on("close", (code) => {
       console.log(
-        `FFmpeg process closed with code ${code} for stream ${streamId}`,
+        `FFmpeg process closed with code ${code} for stream ${streamId} (${activeStreams.size} streams remaining)`,
       );
 
       // Log final state of HLS directory
@@ -322,12 +388,14 @@ app.post("/api/stream/start", async (req, res) => {
         const stats = fs.statSync(m3u8Path);
         const files = fs.readdirSync(hlsDir);
         console.log(
-          `HLS check [${streamId}]: ${files.length} files, m3u8 size: ${stats.size}`,
+          `HLS check [${streamId}]: ${files.length} files, m3u8 size: ${stats.size}, active streams: ${activeStreams.size}`,
         );
       } else {
-        console.log(`HLS check [${streamId}]: No m3u8 file found yet`);
+        console.log(
+          `HLS check [${streamId}]: No m3u8 file found yet, active streams: ${activeStreams.size}`,
+        );
       }
-    }, 10000); // Check every 10 seconds
+    }, 15000); // Check every 15 seconds for multiple streams
 
     // Set timeout to prevent hanging processes
     const timeout = setTimeout(() => {
